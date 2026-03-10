@@ -43,6 +43,10 @@ jobs:
           rpmdev-setuptree
           mkdir -p /root/rpmbuild/{SPECS,SOURCES,BUILD,BUILDROOT,RPMS,SRPMS}
 
+      - name: Fix OCaml API compatibility
+        run: |
+          sed -i 's/G.app2_class/G.app2_name/g' convert/convert_windows.ml
+
       - name: Build patched tarball (autoreconf + make dist)
         working-directory: ${{ github.workspace }}
         run: |
