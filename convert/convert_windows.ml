@@ -240,17 +240,6 @@ let convert (g : G.guestfs) source inspect i_firmware
 
     fix_win_esp ();
 
-    (* Warn if installation of virtio block drivers might conflict with
-     * group policy or AV software causing a boot 0x7B error (RHBZ#1260689).
-     *)
-    if block_driver = Virtio_blk then (
-      if inspect.i_windows_group_policy then
-        warning (f_"this guest has Windows Group Policy Objects (GPO) and a \
-                    new virtio block device driver was installed.  In some \
-                    circumstances, Group Policy may prevent new drivers from \
-                    working (resulting in a 7B boot error).  If this happens, \
-                    try disabling Group Policy before doing the conversion.");
-    );
 
     (* Return guest capabilities from the convert () function. *)
     let guestcaps = {
