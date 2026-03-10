@@ -62,10 +62,6 @@ let convert (g : G.guestfs) source inspect i_firmware
    | IDE -> assert false (* not possible - but maybe ...? *)
   );
 
-  (* If the Windows guest has AV installed. *)
-  let has_antivirus =
-    List.exists (fun { G.app2_class } -> app2_class = "antivirus")
-      inspect.i_apps in
 
   (* Does the guest expect the RTC to be set to UTC or localtime?
    * See https://wiki.archlinux.org/title/System_time#UTC_in_Microsoft_Windows
@@ -254,12 +250,6 @@ let convert (g : G.guestfs) source inspect i_firmware
                     circumstances, Group Policy may prevent new drivers from \
                     working (resulting in a 7B boot error).  If this happens, \
                     try disabling Group Policy before doing the conversion.");
-      if has_antivirus then
-        warning (f_"this guest has Anti-Virus (AV) software and a new virtio \
-                    block device driver was installed.  In some \
-                    circumstances, AV may prevent new drivers from working \
-                    (resulting in a 7B boot error).  If this happens, try \
-                    disabling AV before doing the conversion.");
     );
 
     (* Return guest capabilities from the convert () function. *)
