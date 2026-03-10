@@ -27,6 +27,11 @@ open Types
 
 module G = Guestfs
 
+(* Standard location of [pnputil.exe].  Note this is a virtual
+ * path created by Windows at runtime.
+ *)
+let pnputil = {|%systemroot%\sysnative\pnputil|}
+
 (* Convert Windows guests.
  *
  * This only does a "pre-conversion", the steps needed to get the
@@ -57,52 +62,10 @@ let convert (g : G.guestfs) source inspect i_firmware
    | IDE -> assert false (* not possible - but maybe ...? *)
   );
 
-  (* If the Windows guest appears to be using group policy.
-   *
-   * Since this was written, it has been noted that it may be possible
-   * to remove this restriction:
-   *
-   * 12:35 < StenaviN> here is the article from MS: https://support.microsoft.com/uk-ua/help/2773300/stop-0x0000007b-error-after-you-use-a-group-policy-setting-to-prevent
-   * 12:35 < StenaviN> aside of that the following registry hive should be deleted as well: [-HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall]
-   * 12:36 < StenaviN> more precisely, [-HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall\Restrictions]
-   *)
-  let has_group_policy =
-    Registry.with_hive_readonly g inspect.i_windows_software_hive
-      (fun reg ->
-       try
-         let path = ["Microsoft"; "Windows"; "CurrentVersion";
-                     "Group Policy"; "History"]  in
-         let node =
-           match Registry.get_node reg path with
-           | None -> raise Not_found
-           | Some node -> node in
-         let children = g#hivex_node_children node in
-         let children = Array.to_list children in
-         let children =
-           List.map (fun { G.hivex_node_h = h } -> g#hivex_node_name h)
-                    children in
-         (* Just assume any children looking like "{<GUID>}" mean that
-          * some GPOs were installed.
-          *
-          * In future we might want to look for nodes which match:
-          * History\{<GUID>}\<N> where <N> is a small integer (the order
-          * in which policy objects were applied.
-          *
-          * For an example registry containing GPOs, see RHBZ#1219651.
-          * See also: https://support.microsoft.com/en-us/kb/201453
-          *)
-         let is_gpo_guid name =
-           let len = String.length name in
-           len > 3 && name.[0] = '{' &&
-             Char.isxdigit name.[1] && name.[len-1] = '}'
-         in
-         List.exists is_gpo_guid children
-       with
-         Not_found -> false
-      ) in
-
   (* If the Windows guest has AV installed. *)
-  let has_antivirus = Windows.detect_antivirus inspect in
+  let has_antivirus =
+    List.exists (fun { G.app2_class } -> app2_class = "antivirus")
+      inspect.i_apps in
 
   (* Does the guest expect the RTC to be set to UTC or localtime?
    * See https://wiki.archlinux.org/title/System_time#UTC_in_Microsoft_Windows
@@ -285,7 +248,7 @@ let convert (g : G.guestfs) source inspect i_firmware
      * group policy or AV software causing a boot 0x7B error (RHBZ#1260689).
      *)
     if block_driver = Virtio_blk then (
-      if has_group_policy then
+      if inspect.i_windows_group_policy then
         warning (f_"this guest has Windows Group Policy Objects (GPO) and a \
                     new virtio block device driver was installed.  In some \
                     circumstances, Group Policy may prevent new drivers from \
@@ -368,7 +331,8 @@ let convert (g : G.guestfs) source inspect i_firmware
 
     unconfigure_xenpv ();
     unconfigure_prltools ();
-    unconfigure_vmwaretools ()
+    unconfigure_vmwaretools ();
+    remove_vmware_drivers ()
 
   (* [set_reg_val_dword_1 path name] creates a registry key
    * called [name = dword:1] in the registry [path].
@@ -394,11 +358,51 @@ let convert (g : G.guestfs) source inspect i_firmware
     | None -> sprintf "reg delete \"%s\" /v %s /f" strkey name
 
   and configure_pnputil_install () =
-    let fb_script = "@echo off\n\
-                     \n\
-                     echo Wait for VirtIO drivers to be installed\n\
-                     %systemroot%\\Sysnative\\PnPutil -i -a \
-                     %systemroot%\\Drivers\\Virtio\\*.inf" in
+    let fb_script = {|@echo off
+
+setlocal EnableDelayedExpansion
+set inf_dir=%systemroot%\Drivers\Virtio\
+echo Installing drivers from %inf_dir%
+set REBOOT_PENDING=0
+
+reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired"
+if %errorlevel%==0 (
+echo Windows Update: Reboot required.
+set REBOOT_PENDING=1
+)
+
+reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending"
+if %errorlevel%==0 (
+echo CBS: Reboot required.
+set REBOOT_PENDING=1
+)
+
+reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager" /v PendingFileRenameOperations
+if %errorlevel%==0 (
+echo Session Manager: Reboot required.
+set REBOOT_PENDING=1
+)
+
+if "%REBOOT_PENDING%"=="1" (
+echo A reboot is pending.
+exit /b 249
+) else (
+echo No pending reboot detected.
+)
+
+for %%f in ("%inf_dir%*.inf") do (
+echo Installing: %%~nxf.
+|} ^ pnputil ^ {| -i -a "%%f"
+if !errorlevel! neq 0 if !errorlevel! neq 259 (
+echo Failed to install %%~nxf.
+exit /b 249
+) else (
+echo Successfully installed %%~nxf.
+)
+)
+echo All drivers installed successfully.
+exit /b 0
+)|} in
 
     (* Set priority higher than that of "network-configure" firstboot script. *)
     Firstboot.add_firstboot_script g inspect.i_root ~prio:2000
@@ -443,11 +447,11 @@ let convert (g : G.guestfs) source inspect i_firmware
     let pnp_wait_path = "/Program Files/Guestfs/Firstboot/pnp_wait.exe" in
 
     let fb_script = sprintf
-                      "@echo off\n\
-                       \n\
-                       echo Wait for PnP to complete\n\
-                       \"%s\"\n\
-                       %s"
+                      {|@echo off
+
+echo Wait for PnP to complete
+"%s"
+%s|}
                       (String.replace_char pnp_wait_path '/' '\\')
                       reg_restore_str in
 
@@ -459,21 +463,23 @@ let convert (g : G.guestfs) source inspect i_firmware
     (* Configure VMDP if possible *)
     g#upload tool_path "/vmdp.exe";
 
-    let fb_script = "echo V2V first boot script started\n\
-                     echo Decompressing VMDP installer\n\
-                     \"\\vmdp.exe\"\n\
-                     pushd \"VMDP-*\"\n\
-                     echo Installing VMDP\n\
-                     setup.exe /eula_accepted /no_reboot\n\
-                     popd\n" in
+    let fb_script = {|echo V2V first boot script started
+echo Decompressing VMDP installer
+"\vmdp.exe"
+pushd "VMDP-*"
+echo Installing VMDP
+setup.exe /eula_accepted /no_reboot
+popd
+|} in
 
-    let fb_recover_script = "echo Finishing VMDP installation\n\
-                             if not exist VMDP-* (\n\
-                               \"\\vmdp.exe\"\n\
-                             )\n\
-                             pushd \"VMDP-*\"\n\
-                             setup.exe /eula_accepted /no_reboot\n\
-                             popd\n" in
+    let fb_recover_script = {|echo Finishing VMDP installation
+if not exist VMDP-* (
+"\vmdp.exe"
+)
+pushd "VMDP-*"
+setup.exe /eula_accepted /no_reboot
+popd
+|} in
 
     Firstboot.add_firstboot_script g inspect.i_root
       "configure vmdp" fb_script;
@@ -486,10 +492,11 @@ let convert (g : G.guestfs) source inspect i_firmware
     | None -> () (* nothing to be uninstalled *)
     | Some uninst ->
       let fb_script = sprintf
-                        "@echo off\n\
-                         \n\
-                         echo uninstalling Xen PV driver\n\
-                         \"%s\"\n"
+                        {|@echo off
+
+echo uninstalling Xen PV driver
+"%s"
+|}
                         uninst in
       Firstboot.add_firstboot_script g inspect.i_root
         "uninstall Xen PV" fb_script
@@ -500,14 +507,15 @@ let convert (g : G.guestfs) source inspect i_firmware
     List.iter (
       fun uninst ->
         let fb_script = sprintf
-                          "@echo off\n\
-                           \n\
-                           REG DELETE %s /v RefCount /f\n\
-                           \n\
-                           echo uninstalling Parallels guest tools\n\
-                           rem ERROR_SUCCESS_REBOOT_REQUIRED (3010) is OK too\n\
-                           %s\n\
-                           if errorlevel 3010 exit /b 0\n"
+                          {|@echo off
+
+REG DELETE %s /v RefCount /f
+
+echo uninstalling Parallels guest tools
+rem ERROR_SUCCESS_REBOOT_REQUIRED (3010) is OK too
+%s
+if errorlevel 3010 exit /b 0
+|}
                           regkey uninst in
 
         Firstboot.add_firstboot_script g inspect.i_root
@@ -518,17 +526,108 @@ let convert (g : G.guestfs) source inspect i_firmware
     List.iter (
       fun uninst ->
         let fb_script = sprintf
-                          "@echo off\n\
-                           \n\
-                           echo uninstalling VMware Tools\n\
-                           rem ERROR_SUCCESS_REBOOT_REQUIRED (3010) is OK too\n\
-                           %s\n\
-                           if errorlevel 3010 exit /b 0\n"
+                          {|@echo off
+
+echo uninstalling VMware Tools
+rem ERROR_SUCCESS_REBOOT_REQUIRED (3010) is OK too
+%s
+if errorlevel 3010 exit /b 0
+|}
                           uninst in
 
         Firstboot.add_firstboot_script g inspect.i_root
           "uninstall VMware Tools" fb_script
     ) vmwaretools_uninst
+
+  and remove_vmware_drivers () =
+    (* Essentially the previous step (unconfigure_vmwaretools) is
+     * expected to fail, so as a back-up do the next best thing and
+     * disable any VMware drivers.
+     *)
+    let fb_script = {|@echo off
+
+setlocal enabledelayedexpansion
+
+REM Check for admin privileges
+net session >nul 2>&1
+if %errorlevel% neq 0 (
+    echo ERROR: This script must be run as Administrator!
+    exit /b 1
+)
+
+set "PNPUTIL=|} ^ pnputil ^ {|"
+
+echo.
+echo ====================================
+echo Remove VMware Driver Packages Script
+echo ====================================
+echo.
+
+echo Searching for VMware drivers and packages
+%pnputil% /enum-drivers > "%temp%\all_drivers.txt"
+
+echo Filtering lines with Published Name and VMware...
+findstr /i /c:"Published Name" /c:"Provider Name" "%temp%\all_drivers.txt" > "%temp%\vmware_drivers.txt"
+
+echo.
+echo ===== VMware Drivers Found =====
+
+set COUNT=0
+set LAST_PUBLISHED=
+
+for /f "tokens=1,* delims=:" %%A in (%temp%\vmware_drivers.txt) do (
+    set LINE=%%A
+    set VALUE=%%B
+    set VALUE=!VALUE: =!
+
+    if /i "!LINE!"=="Published Name" (
+        set LAST_PUBLISHED=!VALUE!
+    )
+
+    if /i "!LINE!"=="Provider Name" (
+        echo !VALUE! | findstr /i "VMware" >nul
+        if !errorlevel! == 0 (
+            REM This Published Name belongs to VMware
+            if not "!LAST_PUBLISHED!"=="" (
+                echo Found VMware INF: !LAST_PUBLISHED!
+                set INF_LIST[!COUNT!]=!LAST_PUBLISHED!
+                set /a COUNT+=1
+            )
+        )
+        set LAST_PUBLISHED=
+    )
+)
+
+:: --- Check if any drivers were found ---
+if %COUNT% EQU 0 (
+    echo.
+    echo ================================
+    echo No VMware driver packages found.
+    echo ================================
+    exit /b 0
+)
+
+echo Remove each VMware driver package
+for /l %%I in (0,1,%COUNT%-1) do (
+    set INF=!INF_LIST[%%I]!
+    if not "!INF!"=="" (
+        echo Removing !INF! ...
+        %pnputil% /delete-driver "!INF!" /uninstall /force
+        echo Done.
+    )
+)
+del "%temp%\pnputil_output.txt" >nul 2>&1
+
+echo Clean up temporary files
+del "%temp%\all_drivers.txt" >nul 2>&1
+del "%temp%\vmware_drivers.txt" >nul 2>&1
+
+echo.
+echo VMware driver removal process finished
+exit /b 0
+|} in
+       Firstboot.add_firstboot_script g inspect.i_root
+         "remove VMware drivers" fb_script
 
   and update_system_hive reg =
     (* Update the SYSTEM hive.  When this function is called the hive has
@@ -629,7 +728,7 @@ let convert (g : G.guestfs) source inspect i_firmware
      * the way I build them).  In any case I had to add a firstboot
      * batch file which did this single command:
      *
-     * %systemroot%\Sysnative\PnPutil -i -a %systemroot%\Drivers\Virtio\*.inf
+     * pnputil -i -a %systemroot%\Drivers\Virtio\*.inf
      *)
     let node =
       Registry.get_node reg ["Microsoft"; "Windows"; "CurrentVersion"] in
@@ -921,21 +1020,46 @@ let convert (g : G.guestfs) source inspect i_firmware
     match i_firmware with
     | Firmware.I_BIOS -> ()
     | I_UEFI esp_list ->
-      let esp_temp_path = g#mkdtemp "/Windows/Temp/ESP_XXXXXX" in
-      let uefi_arch = get_uefi_arch_suffix inspect.i_arch in
+       let esp_temp_path =
+         let temp = inspect.i_windows_systemroot ^ "/Temp" in
+         let mp = g#case_sensitive_path temp in
+         let template = mp ^ "/ESP_XXXXXX" in
+         g#mkdtemp template in
+       let uefi_arch = get_uefi_arch_suffix inspect.i_arch in
 
-      List.iter (
-        fun dev_path ->
-        g#mount dev_path esp_temp_path;
-        fix_win_uefi_bcd esp_temp_path;
-        (match uefi_arch with
-         | Some uefi_arch -> fix_win_uefi_fallback esp_temp_path uefi_arch
-         | None -> ()
-        );
-        g#umount esp_temp_path;
-      ) esp_list;
+       List.iter (
+         fun dev_path ->
+           g#mount dev_path esp_temp_path;
+           fix_win_uefi_bcd esp_temp_path;
+           (match uefi_arch with
+            | Some uefi_arch -> fix_win_uefi_fallback esp_temp_path uefi_arch
+            | None -> ()
+           );
+           g#umount esp_temp_path;
+       ) esp_list;
 
-      g#rmdir esp_temp_path
+       g#rmdir esp_temp_path
   in
 
   do_convert ()
+
+(* Post-conversion steps that run with filesystems unmounted *)
+let post_convert (g : G.guestfs) inspect =
+  (* Lock down firstboot dir permissions for windows guests *)
+  message (f_"Fixing NTFS permissions");
+  (* XXX It would be more correct to use g#case_sensitive_path
+   * here, but we cannot do that since the guest filesystem is
+   * not mounted.  As fixing permissions is best-effort, let's
+   * not worry about it.
+   *)
+  let path = "/Program Files/Guestfs" in
+  debug "info: fixing NTFS permissions on %s" path;
+  try g#ntfs_chmod inspect.i_root 0o755 path ~recursive:true
+  with G.Error msg ->
+    warning (f_"ntfs_chmod on %s failed: %s") path msg
+
+module Convert_windows = struct
+  let name = "windows"
+  let convert = convert
+  let post_convert = post_convert
+end
