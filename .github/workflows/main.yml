@@ -3,7 +3,8 @@ on:
   push:
     branches:
       - master
-      - 'ci/**'  # Allow automatic CI testing on ci/* branches
+      - 'ci/**'   # Allow automatic CI testing on ci/* branches
+      - 'pf9/**'  # Platform9 fix branches
   pull_request:
     branches:
       - master
@@ -82,6 +83,9 @@ jobs:
     container:
       image: quay.io/fedora/fedora:${{ matrix.release }}
       options: --privileged
+    # Persist RPM path between steps
+    env:
+      RPM_OUT: /root/rpmbuild/RPMS
 
     steps:
       - name: Identify the system
@@ -95,7 +99,8 @@ jobs:
           dnf install -y \
             git kernel sqlite perl-hivex \
             mingw-srvany-redistributable nbdkit-\* virt-v2v \
-            guestfs-tools\*
+            guestfs-tools\* \
+            rpm-build rpmdevtools
 
           # Hides 'multiple definition' warnings
           dnf remove -y ocaml-libguestfs\*
@@ -139,3 +144,25 @@ jobs:
       #           find -name test-suite.log -exec cat {} \;
       #           exit 1
       #       fi
+
+      - name: Build RPM
+        run: |
+            rpmdev-setuptree
+            # Stage the install
+            mkdir -p /staging
+            ./libguestfs/run make install DESTDIR=/staging
+            # Build binary RPM from our spec
+            rpmbuild -bb \
+              --define "_topdir /root/rpmbuild" \
+              --define "BUILD_STAGING /staging" \
+              --buildroot /root/rpmbuild/BUILDROOT \
+              packaging/virt-v2v-pf9.spec
+            echo "=== RPMs produced ==="
+            find /root/rpmbuild/RPMS -name '*.rpm'
+
+      - name: Upload RPM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: virt-v2v-${{ matrix.release }}-rpm
+          path: /root/rpmbuild/RPMS/**/*.rpm
+          retention-days: 30
