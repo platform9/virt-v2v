@@ -4,6 +4,8 @@ Release:        1.pf9%{?dist}
 Summary:        Convert a virtual machine to run on KVM (Platform9 build)
 License:        GPLv2+
 BuildArch:      x86_64
+AutoReq:        no
+AutoProv:       no
 
 %description
 virt-v2v converts virtual machines from foreign hypervisors to run on KVM.
