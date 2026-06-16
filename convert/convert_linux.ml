@@ -129,6 +129,31 @@ let convert (g : G.guestfs) source inspect i_firmware _ keep_serial_console _ =
         debug "convert_linux: removed %d incl(s) matching %s" n incl;
     ) removed_incls;
 
+    (* On Debian/Ubuntu guests, /etc/default/grub often contains a dynamic
+     * GRUB_DISTRIBUTOR value using backtick command substitution, e.g.:
+     *   GRUB_DISTRIBUTOR=`lsb_release -i -s 2> /dev/null || echo Debian`
+     * The Augeas Shellvars lens cannot parse this construct.  The file parse
+     * fails silently, leaving GRUB_CMDLINE_LINUX* nodes absent from the
+     * Augeas tree.  A subsequent aug_get on those paths then produces a fatal
+     * "no matching node" error and aborts the conversion.
+     * Fix: replace the backtick expression with a static distributor name
+     * before Augeas loads the file.  (PF9#ubuntu-fix)
+     *)
+    if inspect.i_package_format = "deb" &&
+       g#is_file ~followsymlinks:true "/etc/default/grub" then (
+      let content = g#read_file "/etc/default/grub" in
+      let rex = PCRE.compile ~multiline:true "^GRUB_DISTRIBUTOR=`[^`]*`" in
+      if PCRE.matches rex content then (
+        let distro =
+          if inspect.i_distro <> "" then inspect.i_distro else "Linux" in
+        let fixed = PCRE.replace rex
+          (sprintf "GRUB_DISTRIBUTOR=%s" distro) content in
+        g#write "/etc/default/grub" fixed;
+        debug "convert_linux: sanitized GRUB_DISTRIBUTOR backtick expression \
+               in /etc/default/grub for Augeas compatibility"
+      )
+    );
+
     g#aug_load ();
 
     (* Calling debug_augeas_errors will display any //error nodes in
