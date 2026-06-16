@@ -25,7 +25,7 @@ fi
 
 echo "==> Building virt-v2v..."
 autoreconf -fiv
-"$LIBGUESTFS/run" ./configure CFLAGS="-fPIC -g -O2"
+"$LIBGUESTFS/run" ./configure CFLAGS="-fPIC -g -O2" --prefix=/usr
 "$LIBGUESTFS/run" make -j"$JOBS"
 
 echo "==> Staging install..."

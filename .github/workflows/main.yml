@@ -123,7 +123,7 @@ jobs:
             git config --global --add safe.directory $PWD
             git submodule update --init
             autoreconf -fiv
-            ./libguestfs/run ./configure CFLAGS="-fPIC -g -O2" --enable-werror
+            ./libguestfs/run ./configure CFLAGS="-fPIC -g -O2" --prefix=/usr --enable-werror
             ./libguestfs/run make -j
 
       # feb2026: tests mostly run but random bits fail with
