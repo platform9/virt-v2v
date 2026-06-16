@@ -24,17 +24,7 @@ Ubuntu 22.04 migration fixes backported:
 cp -a %{BUILD_STAGING}/. %{buildroot}/
 
 %files
-%{_bindir}/virt-v2v
-%{_bindir}/virt-v2v-in-place
-%{_bindir}/virt-v2v-inspector
-%{_bindir}/virt-v2v-open
-%{_mandir}/man1/virt-v2v.1*
-%{_mandir}/man1/virt-v2v-in-place.1*
-%{_mandir}/man1/virt-v2v-inspector.1*
-%{_mandir}/man1/virt-v2v-open.1*
-%{_datadir}/virt-v2v/
-%{_datadir}/bash-completion/
-%{_datadir}/locale/
+/usr/*
 
 %changelog
 * Thu Jun 01 2026 Platform9 <eng@platform9.com> - 2.11.8-1.pf9
