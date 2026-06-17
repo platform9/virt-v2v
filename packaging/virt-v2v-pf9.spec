@@ -37,6 +37,7 @@ cp -a %{BUILD_STAGING}/. %{buildroot}/
 %{_mandir}/uk/man1/*
 
 %changelog
-* Thu Jun 01 2026 Platform9 <eng@platform9.com> - 2.11.8-1.pf9
+* Tue Jun 17 2026 Platform9 <eng@platform9.com> - 2.11.8-1.pf9
 - Backport: add /usr/sbin/grub-mkconfig to grub binary search list
 - Backport: sanitize GRUB_DISTRIBUTOR backtick in /etc/default/grub
+- Backport: fix crypttab aug_get failure on comment lines (use *[target] predicate)
