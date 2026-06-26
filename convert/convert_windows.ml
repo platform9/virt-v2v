@@ -407,22 +407,27 @@ echo No pending reboot detected.
 )
 
 |} in
+    (* IMPORTANT: do NOT use "else" clauses inside the for loop body.
+     * cmd.exe misparses ") else (" inside a parenthesized for-loop block —
+     * the ")" before "else" is treated as closing the for loop rather than
+     * the inner if, producing ". was unexpected at this time." and aborting
+     * the script.  Use separate "if" statements instead. *)
     let fb_script_body = {|
 for %%f in ("%inf_dir%*.inf") do (
 set SKIP=0
 echo !SKIP_DRIVERS! | findstr /I /C:" %%~nxf " >nul
 if !errorlevel! equ 0 set SKIP=1
+if "!SKIP!"=="1" echo Skipping %%~nxf (not compatible with this platform, see pnputil_skip_drivers).
 if "!SKIP!"=="0" (
 echo Installing: %%~nxf.
 %systemroot%\Sysnative\PnPutil -i -a "%%f"
-if !errorlevel! neq 0 if !errorlevel! neq 259 (
-echo Failed to install %%~nxf.
+set pnp_result=!errorlevel!
+if !pnp_result! neq 0 if !pnp_result! neq 259 (
+echo Failed to install %%~nxf, exit code !pnp_result!.
 exit /b 249
-) else (
-echo Successfully installed %%~nxf.
 )
-) else (
-echo Skipping %%~nxf (not compatible with this platform, see pnputil_skip_drivers).
+if !pnp_result! equ 0 echo Successfully installed %%~nxf.
+if !pnp_result! equ 259 echo Successfully installed %%~nxf.
 )
 )
 echo All drivers installed successfully.
