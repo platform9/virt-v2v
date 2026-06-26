@@ -417,7 +417,7 @@ for %%f in ("%inf_dir%*.inf") do (
 set SKIP=0
 echo !SKIP_DRIVERS! | findstr /I /C:" %%~nxf " >nul
 if !errorlevel! equ 0 set SKIP=1
-if "!SKIP!"=="1" echo Skipping %%~nxf (not compatible with this platform, see pnputil_skip_drivers).
+if "!SKIP!"=="1" echo Skipping %%~nxf - not compatible with this platform, see pnputil_skip_drivers list.
 if "!SKIP!"=="0" (
 echo Installing: %%~nxf.
 %systemroot%\Sysnative\PnPutil -i -a "%%f"
