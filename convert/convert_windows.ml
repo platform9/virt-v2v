@@ -352,7 +352,29 @@ let convert (g : G.guestfs) source inspect i_firmware
     | None -> sprintf "reg delete \"%s\" /v %s /f" strkey name
 
   and configure_pnputil_install () =
-    let fb_script = {|@echo off
+    (* INF filenames in this list are silently skipped by the generated
+     * pnputil firstboot script.  Add an entry here when a driver is
+     * known to fail certificate validation on all migration targets
+     * (e.g. test-signed only, no attestation signing available).
+     * Without this, a single bad driver causes exit 249 -> retry-on-next-boot
+     * -> infinite reboot loop.
+     *
+     * Each entry is matched case-insensitively against the bare filename
+     * (e.g. "smbus.inf", not a full path).
+     *)
+    let skip_drivers = [
+      "smbus.inf";   (* QEMU ACPI SMBus: test-signed only, will never receive
+                        attestation signing because the device is QEMU-specific.
+                        Fails with a certificate error on Windows 10 /
+                        Server 2016+, causing an infinite reboot loop. *)
+    ] in
+    (* Build the SKIP_DRIVERS bat value: space-padded so that
+     *   findstr /C:" smbus.inf "
+     * is an exact filename match, not a substring match. *)
+    let skip_list_bat =
+      " " ^ String.concat " "
+              (List.map String.lowercase_ascii skip_drivers) ^ " " in
+    let fb_script_header = {|@echo off
 
 setlocal EnableDelayedExpansion
 set inf_dir=%systemroot%\Drivers\Virtio\
@@ -384,7 +406,13 @@ exit /b 249
 echo No pending reboot detected.
 )
 
+|} in
+    let fb_script_body = {|
 for %%f in ("%inf_dir%*.inf") do (
+set SKIP=0
+echo !SKIP_DRIVERS! | findstr /I /C:" %%~nxf " >nul
+if !errorlevel! equ 0 set SKIP=1
+if "!SKIP!"=="0" (
 echo Installing: %%~nxf.
 %systemroot%\Sysnative\PnPutil -i -a "%%f"
 if !errorlevel! neq 0 if !errorlevel! neq 259 (
@@ -393,10 +421,16 @@ exit /b 249
 ) else (
 echo Successfully installed %%~nxf.
 )
+) else (
+echo Skipping %%~nxf (not compatible with this platform, see pnputil_skip_drivers).
+)
 )
 echo All drivers installed successfully.
 exit /b 0
-)|} in
+|} in
+    let fb_script = fb_script_header ^
+      "set SKIP_DRIVERS=" ^ skip_list_bat ^ "\n" ^
+      fb_script_body in
 
     (* Set priority higher than that of "network-configure" firstboot script. *)
     Firstboot.add_firstboot_script g inspect.i_root ~prio:2000
