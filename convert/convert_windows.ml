@@ -352,90 +352,11 @@ let convert (g : G.guestfs) source inspect i_firmware
     | None -> sprintf "reg delete \"%s\" /v %s /f" strkey name
 
   and configure_pnputil_install () =
-    (* INF filenames in this list are silently skipped by the generated
-     * pnputil firstboot script.  Add an entry here when a driver is
-     * known to fail certificate validation on all migration targets
-     * (e.g. test-signed only, no attestation signing available).
-     * Without this, a single bad driver causes exit 249 -> retry-on-next-boot
-     * -> infinite reboot loop.
-     *
-     * Each entry is matched case-insensitively against the bare filename
-     * (e.g. "smbus.inf", not a full path).
-     *)
-    let skip_drivers = [
-      "smbus.inf";   (* QEMU ACPI SMBus: test-signed only, will never receive
-                        attestation signing because the device is QEMU-specific.
-                        Fails with a certificate error on Windows 10 /
-                        Server 2016+, causing an infinite reboot loop. *)
-    ] in
-    (* Build the SKIP_DRIVERS bat value: space-padded so that
-     *   findstr /C:" smbus.inf "
-     * is an exact filename match, not a substring match. *)
-    let skip_list_bat =
-      " " ^ String.concat " "
-              (List.map String.lowercase_ascii skip_drivers) ^ " " in
-    let fb_script_header = {|@echo off
-
-setlocal EnableDelayedExpansion
-set inf_dir=%systemroot%\Drivers\Virtio\
-echo Installing drivers from %inf_dir%
-set REBOOT_PENDING=0
-
-reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired"
-if %errorlevel%==0 (
-echo Windows Update: Reboot required.
-set REBOOT_PENDING=1
-)
-
-reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending"
-if %errorlevel%==0 (
-echo CBS: Reboot required.
-set REBOOT_PENDING=1
-)
-
-reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager" /v PendingFileRenameOperations
-if %errorlevel%==0 (
-echo Session Manager: Reboot required.
-set REBOOT_PENDING=1
-)
-
-if "%REBOOT_PENDING%"=="1" (
-echo A reboot is pending.
-exit /b 249
-) else (
-echo No pending reboot detected.
-)
-
-|} in
-    (* IMPORTANT: do NOT use "else" clauses inside the for loop body.
-     * cmd.exe misparses ") else (" inside a parenthesized for-loop block —
-     * the ")" before "else" is treated as closing the for loop rather than
-     * the inner if, producing ". was unexpected at this time." and aborting
-     * the script.  Use separate "if" statements instead. *)
-    let fb_script_body = {|
-for %%f in ("%inf_dir%*.inf") do (
-set SKIP=0
-echo !SKIP_DRIVERS! | findstr /I /C:" %%~nxf " >nul
-if !errorlevel! equ 0 set SKIP=1
-if "!SKIP!"=="1" echo Skipping %%~nxf - not compatible with this platform, see pnputil_skip_drivers list.
-if "!SKIP!"=="0" (
-echo Installing: %%~nxf.
-%systemroot%\Sysnative\PnPutil -i -a "%%f"
-set pnp_result=!errorlevel!
-if !pnp_result! neq 0 if !pnp_result! neq 259 (
-echo Failed to install %%~nxf, exit code !pnp_result!.
-exit /b 249
-)
-if !pnp_result! equ 0 echo Successfully installed %%~nxf.
-if !pnp_result! equ 259 echo Successfully installed %%~nxf.
-)
-)
-echo All drivers installed successfully.
-exit /b 0
-|} in
-    let fb_script = fb_script_header ^
-      "set SKIP_DRIVERS=" ^ skip_list_bat ^ "\n" ^
-      fb_script_body in
+    let fb_script = "@echo off\n\
+                     \n\
+                     echo Wait for VirtIO drivers to be installed\n\
+                     %systemroot%\\Sysnative\\PnPutil -i -a \
+                     %systemroot%\\Drivers\\Virtio\\*.inf" in
 
     (* Set priority higher than that of "network-configure" firstboot script. *)
     Firstboot.add_firstboot_script g inspect.i_root ~prio:2000
