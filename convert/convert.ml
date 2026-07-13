@@ -288,7 +288,9 @@ and do_fstrim g inspect =
 (* Perform fsck before and after conversion.
  *
  * If fsck returns an error then the conversion will fail.  We do not
- * attempt to do any repairs.
+ * attempt to do any repairs, except for ext4 in the pre-conversion
+ * pass, where an uncorrected -n check is retried once with e2fsck's
+ * safe preen mode (-p) before giving up.
  *)
 and do_fsck ?(before=false) g =
   let fses = g#list_filesystems () in
@@ -314,9 +316,15 @@ and do_fsck ?(before=false) g =
          if before then (
            (* Replay and hence repair a dirty log (RHEL-97600) *)
            Fun.protect ~finally:g#umount_all (fun () -> g#mount_ro dev "/");
-         );
 
-         g#e2fsck ~forceno:true dev
+           (try g#e2fsck ~forceno:true dev
+            with G.Error msg ->
+              warning (f_"ext4 filesystem %s has errors, attempting to \
+                          repair automatically: %s") dev msg;
+              g#e2fsck ~correct:true dev)
+         )
+         else
+           g#e2fsck ~forceno:true dev
 
       | dev, "xfs" ->
          if before then (
