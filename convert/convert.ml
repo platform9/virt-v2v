@@ -41,7 +41,6 @@ type options = {
   static_ips : static_ip list;
   customize_ops : Customize_cmdline.ops;
   no_fstrim : bool;
-  run_e2fsck : bool;
 }
 
 (* Mountpoint stats, used for free space estimation. *)
@@ -104,7 +103,7 @@ let rec convert input_disks options source =
 
   (* Check (fsck) the filesystems before conversion. *)
   message (f_"Checking filesystem integrity before conversion");
-  do_fsck ~before:true ~run_e2fsck:options.run_e2fsck g;
+  do_fsck ~before:true g;
 
   (* Detect firmware. *)
   message (f_"Detecting if this guest uses BIOS or UEFI to boot");
@@ -290,11 +289,10 @@ and do_fstrim g inspect =
  *
  * If fsck returns an error then the conversion will fail.  We do not
  * attempt to do any repairs, except for ext4 in the pre-conversion
- * pass, and only when [run_e2fsck] ([--run-e2fsck] option) is set.
- * In that case an uncorrected -n check is retried once with e2fsck's
+ * pass, where an uncorrected -n check is retried once with e2fsck's
  * safe preen mode (-p) before giving up.
  *)
-and do_fsck ?(before=false) ?(run_e2fsck=false) g =
+and do_fsck ?(before=false) g =
   let fses = g#list_filesystems () in
   List.iter (function
       | dev, _ when String.starts_with "btrfsvol:" dev ->
@@ -320,11 +318,11 @@ and do_fsck ?(before=false) ?(run_e2fsck=false) g =
            Fun.protect ~finally:g#umount_all (fun () -> g#mount_ro dev "/");
          );
 
+         if before then (
            try g#e2fsck ~forceno:true dev
            with G.Error msg ->
              warning (f_"ext4 filesystem %s has errors, attempting to \
                          repair automatically: %s") dev msg;
-        if before && run_e2fsck then (
              g#e2fsck ~correct:true dev
          )
          else

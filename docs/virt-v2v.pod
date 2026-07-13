@@ -868,18 +868,6 @@ See L</Networks and bridges>.
 
 This disables progress bars and other unnecessary output.
 
-=item B<--run-e2fsck>
-
-By default, the pre-conversion filesystem check on ext4 filesystems
-is run in check-only mode (C<e2fsck -n>) and never modifies the
-guest.  If this option is given, and that check finds uncorrected
-errors, virt-v2v will retry once using e2fsck's safe preen mode
-(C<e2fsck -p>), which only fixes problems that are safe to fix
-automatically.  If the filesystem still cannot be repaired, the
-conversion fails as before.  Without this option, any ext4 errors
-found by the pre-conversion check cause the conversion to fail
-immediately.
-
 =item B<--root ask>
 
 =item B<--root single>

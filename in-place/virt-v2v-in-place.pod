@@ -260,11 +260,6 @@ See L<virt-v2v(1)/Networks and bridges>.
 
 This disables progress bars and other unnecessary output.
 
-=item B<--run-e2fsck>
-
-Attempt to repair ext4 filesystems that fail the pre-conversion
-check.  See the documentation of this option in L<virt-v2v(1)>.
-
 =item B<--root> ...
 
 Choose the root filesystem to be converted.  See the documentation of
