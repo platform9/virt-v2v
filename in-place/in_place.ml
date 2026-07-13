@@ -152,6 +152,7 @@ let rec main () =
 
   (* Other options that we handle here. *)
   let no_fstrim = ref false in
+  let run_e2fsck = ref false in
   let print_source = ref false in
 
   let input_modes =
@@ -192,6 +193,8 @@ let rec main () =
                                     s_"Print source and stop";
     [ L"root" ],     Getopt.String ("ask|... ", set_root_choice),
                                     s_"How to choose root filesystem";
+    [ L"run-e2fsck" ], Getopt.Set run_e2fsck,
+      s_"Attempt to repair ext4 filesystems that fail the pre-conversion check";
     [ L"smp" ],      Getopt.Int ("vcpus", set_smp),
                                     s_"Set number of vCPUs";
   ] in
@@ -262,6 +265,7 @@ read the man page virt-v2v-in-place(1).
   let output_xml = !output_xml in
   let print_source = !print_source in
   let root_choice = !root_choice in
+  let run_e2fsck = !run_e2fsck in
   let smp = !smp in
   let static_ips = !static_ips in
 
@@ -331,6 +335,7 @@ read the man page virt-v2v-in-place(1).
     static_ips;
     customize_ops;
     no_fstrim;
+    run_e2fsck;
   } in
 
   (* Before starting the input module, check there is sufficient

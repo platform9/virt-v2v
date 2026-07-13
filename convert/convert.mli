@@ -27,6 +27,7 @@ type options = {
   static_ips : Types.static_ip list; (** [--mac :ip:] option *)
   customize_ops : Customize_cmdline.ops; (** virt-customize options *)
   no_fstrim : bool;                (** [--no-fstrim] option *)
+  run_e2fsck : bool;                (** [--run-e2fsck] option *)
 }
 (** Command line options that get passed through to the conversion code. *)
 

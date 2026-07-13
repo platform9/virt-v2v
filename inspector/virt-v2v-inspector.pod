@@ -210,6 +210,8 @@ virt-v2v-inspector.
 
 =item B<--root> ...
 
+=item B<--run-e2fsck>
+
 =item B<--smp> N
 
 =item B<--wrap>
