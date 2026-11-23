@@ -41,6 +41,7 @@ type options = {
   static_ips : static_ip list;
   customize_ops : Customize_cmdline.ops;
   no_fstrim : bool;
+  fsck : bool;
 }
 
 (* Mountpoint stats, used for free space estimation. *)
@@ -101,9 +102,11 @@ let rec convert input_disks options source =
   (* Decrypt the disks. *)
   inspect_decrypt g options.ks;
 
-  (* Check (fsck) the filesystems before conversion. *)
-  message (f_"Checking filesystem integrity before conversion");
-  do_fsck ~before:true g;
+  (* Check (fsck) the filesystems before conversion (only if --fsck). *)
+  if options.fsck then (
+    message (f_"Checking filesystem integrity before conversion");
+    do_fsck ~before:true g
+  );
 
   (* Detect firmware. *)
   message (f_"Detecting if this guest uses BIOS or UEFI to boot");
@@ -166,10 +169,12 @@ let rec convert input_disks options source =
     message (f_"Skipping fstrim (--no-fstrim specified)")
   );
 
-  (* Check (fsck) the filesystems after conversion. *)
-  g#umount_all ();
-  message (f_"Checking filesystem integrity after conversion");
-  do_fsck g;
+  (* Check (fsck) the filesystems after conversion (only if --fsck). *)
+  if options.fsck then (
+    g#umount_all ();
+    message (f_"Checking filesystem integrity after conversion");
+    do_fsck g
+  );
 
   message (f_"Closing the overlay");
   g#umount_all ();
