@@ -110,7 +110,10 @@ jobs:
 
       - name: Checkout and build libguestfs
         run: |
-            git clone --depth=1 https://github.com/libguestfs/libguestfs
+            # Pin to the libguestfs version vJailbreak ships at runtime (1.59.8).
+            # Building against master produces a virt-v2v that needs newer
+            # symbols (e.g. guestfs_kill_procs) than the runtime library has.
+            git clone --depth=1 --branch v1.59.8 https://github.com/libguestfs/libguestfs
             cd libguestfs
             git submodule update --init
             autoreconf -fiv

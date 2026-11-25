@@ -8,7 +8,10 @@ SPEC=/build/virt-v2v/packaging/virt-v2v-pf9.spec
 JOBS=$(nproc)
 
 echo "==> Building libguestfs..."
-git clone --depth=1 https://github.com/libguestfs/libguestfs "$LIBGUESTFS"
+# Pin to the libguestfs version vJailbreak ships at runtime (1.59.8).
+# Building against master produces a virt-v2v that needs newer symbols
+# (e.g. guestfs_kill_procs) than the runtime library has.
+git clone --depth=1 --branch v1.59.8 https://github.com/libguestfs/libguestfs "$LIBGUESTFS"
 cd "$LIBGUESTFS"
 git submodule update --init
 autoreconf -fiv
