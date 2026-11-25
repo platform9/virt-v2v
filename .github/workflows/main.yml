@@ -94,13 +94,13 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          dnf builddep -y virt-v2v libguestfs
+          dnf builddep -y virt-v2v libguestfs libnbd
           # Install a bunch of bits to enable more tests
           dnf install -y \
             git kernel sqlite perl-hivex \
             mingw-srvany-redistributable nbdkit-\* virt-v2v \
             guestfs-tools\* \
-            rpm-build rpmdevtools
+            rpm-build rpmdevtools binutils curl
 
           # Hides 'multiple definition' warnings
           dnf remove -y ocaml-libguestfs\*
@@ -108,9 +108,35 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v5
 
+      # Pin libnbd to the version vJailbreak ships at runtime (1.25.5).
+      # The Fedora repo carries a newer libnbd and ocaml-libnbd, and virt-v2v
+      # built against them needs symbols (e.g. nbd_connect_read_memory) that
+      # the runtime libnbd lacks, so it fails at start with "symbol lookup
+      # error".  Replace the system libnbd and its OCaml bindings with the
+      # pinned release before building libguestfs and virt-v2v.
+      - name: Build and install pinned libnbd
+        run: |
+            dnf remove -y 'ocaml-libnbd*' || true
+            ocamlfind remove nbd 2>/dev/null || true
+            curl -fsSL -o libnbd.tar.gz \
+              https://download.libguestfs.org/libnbd/1.25-development/libnbd-1.25.5.tar.gz
+            mkdir libnbd-src
+            tar -xzf libnbd.tar.gz -C libnbd-src --strip-components=1
+            cd libnbd-src
+            ./configure --prefix=/usr --libdir=/usr/lib64 \
+              --disable-golang --disable-rust --disable-python --disable-fuse
+            make -j
+            make install
+            ldconfig
+            cd ..
+            test "$(pkg-config --modversion libnbd)" = "1.25.5"
+
       - name: Checkout and build libguestfs
         run: |
-            git clone --depth=1 https://github.com/libguestfs/libguestfs
+            # Pin to the libguestfs version vJailbreak ships at runtime (1.59.8).
+            # Building against master produces a virt-v2v that needs newer
+            # symbols (e.g. guestfs_kill_procs) than the runtime library has.
+            git clone --depth=1 --branch v1.59.8 https://github.com/libguestfs/libguestfs
             cd libguestfs
             git submodule update --init
             autoreconf -fiv
@@ -159,6 +185,31 @@ jobs:
               packaging/virt-v2v-pf9.spec
             echo "=== RPMs produced ==="
             find /root/rpmbuild/RPMS -name '*.rpm'
+
+      # Fail the build if virt-v2v needs symbols that the pinned libnbd or
+      # libguestfs do not provide, instead of finding out at migration time.
+      - name: Verify symbols resolve against pinned libraries
+        shell: bash
+        run: |
+            set -euo pipefail
+            nbdlib=$(find /usr/lib64 -maxdepth 1 -name 'libnbd.so.0*' -type f | head -1)
+            gflib=$(find libguestfs/lib/.libs -name 'libguestfs.so.0*' -type f | head -1)
+            echo "libnbd: $nbdlib"; echo "libguestfs: $gflib"
+            have=$( { nm -D --defined-only "$nbdlib"; nm -D --defined-only "$gflib"; } \
+                    | awk '{print $3}' | sed 's/@.*//' | sort -u )
+            status=0
+            for b in /staging/usr/bin/virt-v2v*; do
+                [ -f "$b" ] && [ -x "$b" ] || continue
+                need=$(nm -D --undefined-only "$b" | awk '{print $2}' | sed 's/@.*//' \
+                       | grep -E '^(nbd_|guestfs_)' | sort -u || true)
+                missing=$(comm -23 <(echo "$need") <(echo "$have") || true)
+                if [ -n "$missing" ]; then
+                    echo "ERROR: $b needs symbols missing from the pinned libraries:"
+                    echo "$missing"
+                    status=1
+                fi
+            done
+            exit $status
 
       - name: Upload RPM artifact
         uses: actions/upload-artifact@v4
